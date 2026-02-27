@@ -1,6 +1,6 @@
-AWSTemplateFormatVersion: '2010-09-09'
+AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: Alexa Music Skill API エンドポイント
+Description: "Alexa Music Skill API エンドポイント"
 
 Globals:
   Function:
@@ -28,15 +28,15 @@ Resources:
 Parameters:
   PartyKitUrl:
     Type: String
-    Description: PartyKitのデプロイ先URL（例: https://alexa-mp3-player.username.partykit.dev）
+    Description: "PartyKitのデプロイ先URL"
     Default: ""
   ApiSecret:
     Type: String
-    Description: PartyKit↔Lambda間の認証秘密鍵
+    Description: "PartyKit-Lambda間の認証秘密鍵"
     NoEcho: true
     Default: ""
 
 Outputs:
   FunctionArn:
-    Description: Lambda関数のARN（Alexa開発者コンソールに設定する値）
+    Description: "Lambda関数のARN（Alexa開発者コンソールに設定する値）"
     Value: !GetAtt AlexaMusicSkillFunction.Arn
