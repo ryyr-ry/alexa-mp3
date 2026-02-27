@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Alexa MP3プレイヤー</title>
+  <meta name="description" content="Echo PlusでMP3を再生するための管理画面">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700;14..32,800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <!-- サイドバー -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">
+          <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+            <rect width="28" height="28" rx="7" fill="url(#logo-grad)"/>
+            <path d="M14 7C10.134 7 7 10.134 7 14s3.134 7 7 7 7-3.134 7-7-3.134-7-7-7zm0 10.5a3.5 3.5 0 110-7 3.5 3.5 0 010 7z" fill="white" fill-opacity="0.95"/>
+            <circle cx="14" cy="14" r="1.5" fill="white"/>
+            <defs><linearGradient id="logo-grad" x1="0" y1="0" x2="28" y2="28"><stop stop-color="#7C3AED"/><stop offset="1" stop-color="#EC4899"/></linearGradient></defs>
+          </svg>
+          <span class="sidebar-title">ライブラリ</span>
+        </div>
+        <div class="connection-badge" id="connectionStatus" title="接続状態">
+          <span class="conn-dot"></span>
+          <span class="conn-text" id="connectionText"></span>
+        </div>
+      </div>
+      <nav class="sidebar-nav">
+        <button class="nav-item active" data-tab="tracks">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+          <span>すべての曲</span>
+        </button>
+        <button class="nav-item" data-tab="playlists">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+          <span>プレイリスト</span>
+        </button>
+      </nav>
+
+    </aside>
+
+    <!-- メインコンテンツ -->
+    <main class="main">
+      <header class="main-header">
+        <div class="header-left">
+          <h1 class="page-title" id="pageTitle">すべての曲</h1>
+          <span class="track-count" id="trackCount"></span>
+        </div>
+        <div class="header-actions">
+          <div class="search-wrap" id="searchWrap">
+            <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" class="search-input" id="searchInput" placeholder="曲名、アーティスト…">
+          </div>
+          <button class="btn-add" id="addBtn" title="曲を追加">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- アップロードエリア -->
+      <div class="upload-sheet" id="uploadSheet" hidden>
+        <div class="upload-zone" id="uploadZone">
+          <div class="upload-icon-wrap">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          </div>
+          <p class="upload-label">MP3ファイルをドロップ、または<span class="upload-link">ファイルを選択</span></p>
+          <input type="file" id="fileInput" accept=".mp3,audio/mpeg" multiple hidden>
+        </div>
+        <div class="upload-bar" id="uploadBar" hidden>
+          <div class="upload-bar-fill" id="uploadBarFill"></div>
+          <span class="upload-bar-text" id="uploadBarText">処理中...</span>
+        </div>
+      </div>
+
+      <!-- 曲一覧 -->
+      <section class="content-panel active" id="tracksTab">
+        <div class="track-table" id="trackList">
+          <div class="empty">
+            <div class="empty-icon">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+            </div>
+            <p class="empty-title">曲がまだありません</p>
+            <p class="empty-sub">右上の＋ボタンからMP3を追加してください</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- プレイリスト -->
+      <section class="content-panel" id="playlistsTab">
+        <div class="playlist-grid" id="playlistList">
+          <div class="empty">
+            <div class="empty-icon">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/></svg>
+            </div>
+            <p class="empty-title">プレイリストがありません</p>
+            <p class="empty-sub">曲を追加してからプレイリストを作成できます</p>
+          </div>
+        </div>
+        <button class="fab" id="createPlaylistBtn" title="新規プレイリスト">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+      </section>
+    </main>
+
+    <!-- プレイリスト作成/編集モーダル -->
+    <div class="modal-backdrop" id="playlistModal" hidden>
+      <div class="modal-sheet">
+        <div class="modal-handle"></div>
+        <h2 class="modal-title" id="modalTitle">新規プレイリスト</h2>
+        <input type="text" class="modal-input" id="playlistName" placeholder="プレイリスト名">
+        <div class="modal-tracks" id="trackSelector"></div>
+        <div class="modal-actions">
+          <button class="btn-flat" id="cancelPlaylist">キャンセル</button>
+          <button class="btn-filled" id="savePlaylist">作成</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- トースト通知 -->
+    <div class="toast-container" id="toastContainer"></div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.7/jsmediatags.min.js"
+          integrity="sha512-RGPSTVZOEdyHy0jWMQ/yKCPGPGrOG2IAn9GUVDZ8L8v1/hCLYzGDvLMzXO4+yVfjrPN+LzFa2FKv2oakRUusw=="
+          crossorigin="anonymous"
+          referrerpolicy="no-referrer"></script>
+  <script src="app.js"></script>
+</body>
+</html>

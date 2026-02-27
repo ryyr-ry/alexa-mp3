@@ -1,0 +1,8 @@
+{
+  "$schema": "https://www.partykit.io/schema.json",
+  "name": "alexa-mp3-player",
+  "main": "src/server.ts",
+  "serve": {
+    "path": "public"
+  }
+}

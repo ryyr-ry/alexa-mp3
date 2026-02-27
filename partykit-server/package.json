@@ -1,0 +1,21 @@
+{
+  "name": "alexa-mp3-partykit",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "npx partykit dev",
+    "deploy": "npx partykit deploy"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.17.0",
+    "partykit": "^0.0.115",
+    "partysocket": "^1.1.16"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0"
+  },
+  "overrides": {
+    "workerd": "1.20260226.1"
+  }
+}

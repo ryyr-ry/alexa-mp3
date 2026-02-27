@@ -1,0 +1,38 @@
+# ===== Dependencies =====
+node_modules/
+
+# ===== Build output =====
+dist/
+*.js.map
+
+# ===== Environment / Secrets =====
+.env
+.env.local
+.env.*.local
+
+# ===== PartyKit =====
+.partykit/
+
+# ===== AWS SAM =====
+.aws-sam/
+samconfig.toml
+
+# ===== Lambda deploy =====
+lambda.zip
+catalog_output/
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ===== IDE =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ===== Misc =====
+*.log
+*.tmp

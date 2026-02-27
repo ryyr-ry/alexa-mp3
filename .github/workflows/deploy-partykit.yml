@@ -1,0 +1,76 @@
+name: Deploy PartyKit Server
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "partykit-server/**"
+      - ".github/workflows/deploy-partykit.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: partykit-server
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: partykit-server/package-lock.json
+
+      - name: Validate secrets
+        run: |
+          missing=()
+          [ -z "$PARTYKIT_TOKEN" ] && missing+=("PARTYKIT_TOKEN")
+          [ -z "$PARTYKIT_LOGIN" ] && missing+=("PARTYKIT_LOGIN")
+          [ -z "$TURSO_URL" ] && missing+=("TURSO_URL")
+          [ -z "$TURSO_AUTH_TOKEN" ] && missing+=("TURSO_AUTH_TOKEN")
+          [ -z "$R2_ENDPOINT" ] && missing+=("R2_ENDPOINT")
+          [ -z "$R2_BUCKET" ] && missing+=("R2_BUCKET")
+          [ -z "$R2_ACCESS_KEY" ] && missing+=("R2_ACCESS_KEY")
+          [ -z "$R2_SECRET_KEY" ] && missing+=("R2_SECRET_KEY")
+          [ -z "$API_SECRET" ] && missing+=("API_SECRET")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::未設定のシークレット: ${missing[*]}"
+            exit 1
+          fi
+        env:
+          PARTYKIT_TOKEN: ${{ secrets.PARTYKIT_TOKEN }}
+          PARTYKIT_LOGIN: ${{ secrets.PARTYKIT_LOGIN }}
+          TURSO_URL: ${{ secrets.TURSO_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ACCESS_KEY: ${{ secrets.R2_ACCESS_KEY }}
+          R2_SECRET_KEY: ${{ secrets.R2_SECRET_KEY }}
+          API_SECRET: ${{ secrets.API_SECRET }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Deploy to PartyKit
+        run: |
+          npx partykit deploy \
+            --var "TURSO_URL=$TURSO_URL" \
+            --var "TURSO_AUTH_TOKEN=$TURSO_AUTH_TOKEN" \
+            --var "R2_ENDPOINT=$R2_ENDPOINT" \
+            --var "R2_BUCKET=$R2_BUCKET" \
+            --var "R2_ACCESS_KEY=$R2_ACCESS_KEY" \
+            --var "R2_SECRET_KEY=$R2_SECRET_KEY" \
+            --var "API_SECRET=$API_SECRET"
+        env:
+          PARTYKIT_TOKEN: ${{ secrets.PARTYKIT_TOKEN }}
+          PARTYKIT_LOGIN: ${{ secrets.PARTYKIT_LOGIN }}
+          TURSO_URL: ${{ secrets.TURSO_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ACCESS_KEY: ${{ secrets.R2_ACCESS_KEY }}
+          R2_SECRET_KEY: ${{ secrets.R2_SECRET_KEY }}
+          API_SECRET: ${{ secrets.API_SECRET }}
