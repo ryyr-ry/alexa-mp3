@@ -61,6 +61,7 @@ jobs:
       - name: SAM Deploy
         run: |
           sam deploy --no-confirm-changeset --no-fail-on-empty-changeset \
+            --resolve-s3 \
             --stack-name alexa-mp3-skill \
             --capabilities CAPABILITY_IAM \
             --parameter-overrides \
