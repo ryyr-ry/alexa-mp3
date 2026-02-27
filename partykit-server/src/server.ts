@@ -267,7 +267,11 @@ export default class MusicServer implements Party.Server {
     }
 
     const url = new URL(req.url);
-    const path = url.pathname;
+    const fullPath = url.pathname;
+    // PartyKitはURLに /parties/:party/:roomId プレフィックスを含む。
+    // /api/ 以降を抽出してルーティングに使用する。
+    const apiIdx = fullPath.indexOf("/api/");
+    const path = apiIdx !== -1 ? fullPath.slice(apiIdx) : fullPath;
 
     // --- 公開API（認証不要） ---
     const publicResult = await this.handlePublicRoutes(path, req);
