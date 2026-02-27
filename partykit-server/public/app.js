@@ -89,14 +89,39 @@ function confirmAction(message, actionLabel = "削除") {
 // =====================================================
 let reconnectAttempts = 0;
 
-/** WS接続状態を確認してから送信。未接続時はトーストで通知。 */
-function safeSend(data) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) {
-    showToast("接続が切れています。再接続をお待ちください", "error");
-    return false;
+/** WS接続がOPENになるまで待つ（指数バックオフ上限内） */
+function waitForConnection(timeoutMs = 30000) {
+  return new Promise((resolve, reject) => {
+    if (ws && ws.readyState === WebSocket.OPEN) return resolve();
+    const start = Date.now();
+    const check = () => {
+      if (ws && ws.readyState === WebSocket.OPEN) return resolve();
+      if (Date.now() - start > timeoutMs) return reject(new Error("WS reconnect timeout"));
+      setTimeout(check, 500);
+    };
+    check();
+  });
+}
+
+/** WS送信（指数バックオフリトライ付き、最大5回） */
+async function safeSend(data, maxRetries = 5) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(data);
+      return true;
+    }
+    if (attempt === maxRetries) break;
+    const delay = Math.min(1000 * Math.pow(2, attempt), 16000);
+    console.log(`[Upload] WS未接続。${delay / 1000}秒後にリトライ (${attempt + 1}/${maxRetries})`);
+    showToast(`接続待ち… (${attempt + 1}/${maxRetries})`, "info");
+    try {
+      await waitForConnection(delay + 5000);
+    } catch {
+      // タイムアウト — 次のリトライへ
+    }
   }
-  ws.send(data);
-  return true;
+  showToast("接続を回復できませんでした。ページを再読み込みしてください", "error");
+  return false;
 }
 
 function connect() {
@@ -137,7 +162,13 @@ function connect() {
 
     if (msg.type === "track-added" && pendingUploads.length > 0) {
       const pending = pendingUploads.shift();
-      if (pending) uploadMp3(msg.track.id, pending.file);
+      if (pending) {
+        uploadMp3(msg.track.id, pending.file).catch((err) => {
+          console.error("[Upload] MP3アップロード失敗:", err);
+          showToast("MP3アップロードに失敗しました", "error");
+          uploadResolve?.();
+        });
+      }
     }
 
     if (msg.type === "error") {
@@ -212,31 +243,29 @@ async function handleFiles(fileList) {
   setTimeout(() => { uploadBar.hidden = true; }, 2500);
 }
 
-function addTrackFromFile(file) {
+async function addTrackFromFile(file) {
+  // ID3タグとdurationを並行取得
+  const [tags, duration] = await Promise.all([readId3(file), readDuration(file)]);
+  const input = {
+    title:      tags.title  || file.name.replace(/\.mp3$/i, ""),
+    artist:     tags.artist || "不明なアーティスト",
+    album:      tags.album  || "",
+    duration:   Math.round(duration),
+    artDataUrl: tags.art    || null,
+  };
+
+  pendingUploads.push({ file });
+  const sent = await safeSend(JSON.stringify({ type: "add-track", input }));
+
+  if (!sent) {
+    // リトライ上限超え: pending除去して次に進む
+    pendingUploads.pop();
+    return;
+  }
+
+  // upload-complete を待って resolve
   return new Promise((resolve) => {
-    // ID3タグとdurationを並行取得
-    Promise.all([readId3(file), readDuration(file)]).then(([tags, duration]) => {
-      const input = {
-        title:      tags.title  || file.name.replace(/\.mp3$/i, ""),
-        artist:     tags.artist || "不明なアーティスト",
-        album:      tags.album  || "",
-        duration:   Math.round(duration),
-        artDataUrl: tags.art    || null,
-      };
-
-      pendingUploads.push({ file });
-      const sent = safeSend(JSON.stringify({ type: "add-track", input }));
-
-      if (!sent) {
-        // WS未接続: pending除去して次に進む
-        pendingUploads.pop();
-        resolve();
-        return;
-      }
-
-      // upload-complete を待って resolve
-      uploadResolve = resolve;
-    });
+    uploadResolve = resolve;
   });
 }
 
