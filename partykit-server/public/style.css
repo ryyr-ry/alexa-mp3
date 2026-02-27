@@ -575,6 +575,10 @@ body {
   animation: fadeIn 0.2s var(--timing);
 }
 
+.modal-backdrop[hidden] {
+  display: none !important;
+}
+
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
 .modal-sheet {
