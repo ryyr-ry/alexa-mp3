@@ -100,8 +100,17 @@ async function handleIntent(
   const slots = request.intent!.slots ?? {};
 
   switch (intentName) {
-    case "PlayMusicIntent":
-      return handlePlayMusicIntent(db, slots, urlBuilder);
+    case "PlaySongIntent":
+      return handlePlaySongIntent(db, slots["songName"]?.value, urlBuilder);
+
+    case "PlayArtistIntent":
+      return handlePlayArtistIntent(db, slots["artistName"]?.value, urlBuilder);
+
+    case "PlayPlaylistIntent":
+      return handlePlayPlaylistIntent(db, slots["playlistName"]?.value, urlBuilder);
+
+    case "PlayAllIntent":
+      return handlePlayAllIntent(db, urlBuilder);
 
     case "AMAZON.ResumeIntent":
       return handleResumeIntent(context, urlBuilder, db);
@@ -129,81 +138,105 @@ async function handleIntent(
 }
 
 // ===========================================================
-// PlayMusicIntent — 曲名/アーティスト名/PL名で再生
+// PlaySongIntent — 曲名で再生（AMAZON.MusicRecording）
 // ===========================================================
 
-async function handlePlayMusicIntent(
+async function handlePlaySongIntent(
   db: TursoDb,
-  slots: Record<string, { value?: string }>,
+  songName: string | undefined,
   urlBuilder: UrlBuilder,
 ): Promise<Record<string, unknown>> {
-  const songName = slots["songName"]?.value;
-  const artistName = slots["artistName"]?.value;
-  const playlistName = slots["playlistName"]?.value;
-
-  // プレイリスト名
-  if (playlistName) {
-    const playlists = await db.searchPlaylistsByName(playlistName);
-    const pl = playlists[0];
-    if (!pl || pl.trackIds.length === 0) {
-      return buildSpeechResponse(`プレイリスト ${playlistName} が見つかりませんでした。`, true);
-    }
-    const tracks = await db.getPlaylistTracks(pl.id);
-    const first = tracks[0];
-    if (!first) {
-      return buildSpeechResponse("プレイリストに曲が含まれていません。", true);
-    }
-    return buildPlayResponse(
-      first,
-      urlBuilder.mp3(first.id),
-      urlBuilder.art(first.id),
-      { trackId: first.id, context: `playlist::${pl.id}` },
-      "REPLACE_ALL",
-      0,
-      undefined,
-      `プレイリスト ${pl.name} を再生します。`,
-    );
+  if (!songName) {
+    return handlePlayAllIntent(db, urlBuilder);
   }
-
-  // アーティスト名
-  if (artistName) {
-    const tracks = await db.searchTracksByArtist(artistName);
-    if (tracks.length === 0) {
-      return buildSpeechResponse(`${artistName} の曲が見つかりませんでした。`, true);
-    }
-    const first = tracks[0]!;
-    return buildPlayResponse(
-      first,
-      urlBuilder.mp3(first.id),
-      urlBuilder.art(first.id),
-      { trackId: first.id, context: `artist::${first.artistId}` },
-      "REPLACE_ALL",
-      0,
-      undefined,
-      `${first.artist} の曲を再生します。`,
-    );
+  const tracks = await db.searchTracksByTitle(songName);
+  if (tracks.length === 0) {
+    return buildSpeechResponse(`${songName} が見つかりませんでした。`, true);
   }
+  const first = tracks[0]!;
+  return buildPlayResponse(
+    first,
+    urlBuilder.mp3(first.id),
+    urlBuilder.art(first.id),
+    { trackId: first.id, context: "single" },
+    "REPLACE_ALL",
+    0,
+    undefined,
+    `${first.title} を再生します。`,
+  );
+}
 
-  // 曲名
-  if (songName) {
-    const tracks = await db.searchTracksByTitle(songName);
-    if (tracks.length === 0) {
-      return buildSpeechResponse(`${songName} が見つかりませんでした。`, true);
-    }
-    const first = tracks[0]!;
-    return buildPlayResponse(
-      first,
-      urlBuilder.mp3(first.id),
-      urlBuilder.art(first.id),
-      { trackId: first.id, context: "single" },
-      "REPLACE_ALL",
-      0,
-      undefined,
-      `${first.title} を再生します。`,
-    );
+// ===========================================================
+// PlayArtistIntent — アーティスト名で再生（AMAZON.Artist）
+// ===========================================================
+
+async function handlePlayArtistIntent(
+  db: TursoDb,
+  artistName: string | undefined,
+  urlBuilder: UrlBuilder,
+): Promise<Record<string, unknown>> {
+  if (!artistName) {
+    return handlePlayAllIntent(db, urlBuilder);
   }
+  const tracks = await db.searchTracksByArtist(artistName);
+  if (tracks.length === 0) {
+    return buildSpeechResponse(`${artistName} の曲が見つかりませんでした。`, true);
+  }
+  const first = tracks[0]!;
+  return buildPlayResponse(
+    first,
+    urlBuilder.mp3(first.id),
+    urlBuilder.art(first.id),
+    { trackId: first.id, context: `artist::${first.artistId}` },
+    "REPLACE_ALL",
+    0,
+    undefined,
+    `${first.artist} の曲を再生します。`,
+  );
+}
 
-  // スロットなし → 全曲再生
+// ===========================================================
+// PlayPlaylistIntent — プレイリスト名で再生（AMAZON.SearchQuery）
+// ===========================================================
+
+async function handlePlayPlaylistIntent(
+  db: TursoDb,
+  playlistName: string | undefined,
+  urlBuilder: UrlBuilder,
+): Promise<Record<string, unknown>> {
+  if (!playlistName) {
+    return buildSpeechResponse("プレイリスト名を言ってください。", false);
+  }
+  const playlists = await db.searchPlaylistsByName(playlistName);
+  const pl = playlists[0];
+  if (!pl || pl.trackIds.length === 0) {
+    return buildSpeechResponse(`プレイリスト ${playlistName} が見つかりませんでした。`, true);
+  }
+  const tracks = await db.getPlaylistTracks(pl.id);
+  const first = tracks[0];
+  if (!first) {
+    return buildSpeechResponse("プレイリストに曲が含まれていません。", true);
+  }
+  return buildPlayResponse(
+    first,
+    urlBuilder.mp3(first.id),
+    urlBuilder.art(first.id),
+    { trackId: first.id, context: `playlist::${pl.id}` },
+    "REPLACE_ALL",
+    0,
+    undefined,
+    `プレイリスト ${pl.name} を再生します。`,
+  );
+}
+
+// ===========================================================
+// PlayAllIntent — 全曲再生
+// ===========================================================
+
+async function handlePlayAllIntent(
+  db: TursoDb,
+  urlBuilder: UrlBuilder,
+): Promise<Record<string, unknown>> {
   const tracks = await db.getTracks();
   if (tracks.length === 0) {
     return buildSpeechResponse("再生できる曲がありません。", true);

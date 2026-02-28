@@ -4,25 +4,44 @@
       "invocationName": "マイミュージック",
       "intents": [
         {
-          "name": "PlayMusicIntent",
+          "name": "PlaySongIntent",
           "slots": [
-            { "name": "songName", "type": "AMAZON.SearchQuery" },
-            { "name": "artistName", "type": "AMAZON.SearchQuery" },
-            { "name": "playlistName", "type": "AMAZON.SearchQuery" }
+            { "name": "songName", "type": "AMAZON.MusicRecording" }
           ],
           "samples": [
             "{songName} を再生",
             "{songName} をかけて",
             "{songName} を流して",
             "{songName} を聴きたい",
-            "{songName} 再生して",
+            "{songName} 再生して"
+          ]
+        },
+        {
+          "name": "PlayArtistIntent",
+          "slots": [
+            { "name": "artistName", "type": "AMAZON.Artist" }
+          ],
+          "samples": [
             "{artistName} の曲をかけて",
             "{artistName} の曲を再生",
             "{artistName} の曲を流して",
+            "{artistName} を聴きたい"
+          ]
+        },
+        {
+          "name": "PlayPlaylistIntent",
+          "slots": [
+            { "name": "playlistName", "type": "AMAZON.SearchQuery" }
+          ],
+          "samples": [
             "プレイリスト {playlistName} を再生",
             "プレイリスト {playlistName} をかけて",
-            "プレイリスト {playlistName} を流して",
-            "プレイリスト {playlistName} を聴きたい",
+            "プレイリスト {playlistName} を流して"
+          ]
+        },
+        {
+          "name": "PlayAllIntent",
+          "samples": [
             "曲をかけて",
             "音楽を再生",
             "何か再生して",

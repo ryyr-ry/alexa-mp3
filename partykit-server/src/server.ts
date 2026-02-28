@@ -15,7 +15,6 @@ import {
   handleUpdatePlaylist,
   handleArchivePlaylist,
 } from "./handlers/playlist-handler";
-import { handleGetCatalog } from "./handlers/catalog-handler";
 import { handleAlexaRequest } from "./handlers/alexa-handler";
 import { jsonResponse } from "./utils/json-response";
 import { TursoDb } from "./utils/db";
@@ -340,10 +339,7 @@ export default class MusicServer implements Party.Server {
       return handleGetPlaylist(this.db, decodeURIComponent(plMatch[1]));
     }
 
-    const catalogMatch = path.match(/^\/api\/catalog\/([^/]+)$/);
-    if (catalogMatch?.[1] && req.method === "GET") {
-      return handleGetCatalog(this.db, catalogMatch[1]);
-    }
+
 
     // Alexaエンドポイント（AudioPlayer Interface + 標準Skill API）
     if (path === "/api/alexa" && req.method === "POST") {
