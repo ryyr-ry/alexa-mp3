@@ -44,6 +44,7 @@ export class TursoDb {
         id TEXT PRIMARY KEY, title TEXT NOT NULL, artist TEXT NOT NULL,
         artist_id TEXT NOT NULL DEFAULT '', album TEXT NOT NULL DEFAULT '',
         duration INTEGER NOT NULL DEFAULT 0,
+        keywords TEXT NOT NULL DEFAULT '',
         added_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
       CREATE INDEX IF NOT EXISTS idx_tracks_artist_id ON tracks(artist_id);
@@ -51,6 +52,7 @@ export class TursoDb {
         id TEXT PRIMARY KEY, title TEXT NOT NULL, artist TEXT NOT NULL,
         artist_id TEXT NOT NULL DEFAULT '', album TEXT NOT NULL DEFAULT '',
         duration INTEGER NOT NULL DEFAULT 0,
+        keywords TEXT NOT NULL DEFAULT '',
         added_at TEXT NOT NULL, archived_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
       CREATE TABLE IF NOT EXISTS playlists (
@@ -69,6 +71,17 @@ export class TursoDb {
         PRIMARY KEY (playlist_id, track_id)
       );
     `);
+
+    // マイグレーション: 既存テーブルにkeywordsカラムを追加（既存なら無視）
+    for (const table of ["tracks", "archived_tracks"]) {
+      try {
+        await this.client.execute(`ALTER TABLE ${table} ADD COLUMN keywords TEXT NOT NULL DEFAULT ''`);
+        console.log(`[DB] ${table}にkeywordsカラムを追加`);
+      } catch {
+        // カラム既存 → 無視
+      }
+    }
+
     console.log("[DB] スキーマ初期化完了");
   }
 
@@ -111,14 +124,14 @@ export class TursoDb {
 
   async addTrack(track: Track): Promise<void> {
     await this.client.execute({
-      sql: "INSERT INTO tracks (id, title, artist, artist_id, album, duration, added_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      args: [track.id, track.title, track.artist, track.artistId, track.album, track.duration, track.addedAt],
+      sql: "INSERT INTO tracks (id, title, artist, artist_id, album, duration, keywords, added_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      args: [track.id, track.title, track.artist, track.artistId, track.album, track.duration, track.keywords, track.addedAt],
     });
   }
 
   async updateTrack(
     id: string,
-    fields: { title?: string; artist?: string; album?: string }
+    fields: { title?: string; artist?: string; album?: string; keywords?: string }
   ): Promise<boolean> {
     const sets: string[] = [];
     const args: InValue[] = [];
@@ -128,6 +141,7 @@ export class TursoDb {
       sets.push("artist_id = ?"); args.push(deriveArtistId(fields.artist));
     }
     if (fields.album !== undefined) { sets.push("album = ?"); args.push(fields.album); }
+    if (fields.keywords !== undefined) { sets.push("keywords = ?"); args.push(fields.keywords); }
     if (sets.length === 0) return false;
     args.push(id);
     const rs = await this.client.execute({
@@ -141,8 +155,8 @@ export class TursoDb {
     const tx = await this.client.transaction("write");
     try {
       const inserted = await tx.execute({
-        sql: `INSERT OR REPLACE INTO archived_tracks (id, title, artist, artist_id, album, duration, added_at)
-              SELECT id, title, artist, artist_id, album, duration, added_at FROM tracks WHERE id = ?`,
+        sql: `INSERT OR REPLACE INTO archived_tracks (id, title, artist, artist_id, album, duration, keywords, added_at)
+              SELECT id, title, artist, artist_id, album, duration, keywords, added_at FROM tracks WHERE id = ?`,
         args: [id],
       });
       if ((inserted.rowsAffected ?? 0) === 0) {
@@ -344,22 +358,28 @@ export class TursoDb {
 
   // ===== Alexa検索 =====
 
-  /** 曲名でLIKE部分一致検索（スペース正規化） */
+  /** 曲名でLIKE部分一致検索（スペース正規化＋keywords検索） */
   async searchTracksByTitle(query: string): Promise<Track[]> {
     const normalized = query.replace(/\s+/g, "");
     const rs = await this.client.execute({
-      sql: "SELECT * FROM tracks WHERE REPLACE(title, ' ', '') LIKE ? ORDER BY added_at DESC",
-      args: [`%${normalized}%`],
+      sql: `SELECT * FROM tracks
+            WHERE REPLACE(title, ' ', '') LIKE ?
+               OR REPLACE(keywords, ' ', '') LIKE ?
+            ORDER BY added_at DESC`,
+      args: [`%${normalized}%`, `%${normalized}%`],
     });
     return rs.rows.map(rowToTrack);
   }
 
-  /** アーティスト名でLIKE部分一致検索（スペース正規化） */
+  /** アーティスト名でLIKE部分一致検索（スペース正規化＋keywords検索） */
   async searchTracksByArtist(query: string): Promise<Track[]> {
     const normalized = query.replace(/\s+/g, "");
     const rs = await this.client.execute({
-      sql: "SELECT * FROM tracks WHERE REPLACE(artist, ' ', '') LIKE ? ORDER BY added_at DESC",
-      args: [`%${normalized}%`],
+      sql: `SELECT * FROM tracks
+            WHERE REPLACE(artist, ' ', '') LIKE ?
+               OR REPLACE(keywords, ' ', '') LIKE ?
+            ORDER BY added_at DESC`,
+      args: [`%${normalized}%`, `%${normalized}%`],
     });
     return rs.rows.map(rowToTrack);
   }
@@ -391,6 +411,7 @@ function rowToTrack(row: Record<string, unknown>): Track {
     artistId: String(row["artist_id"] ?? ""),
     album: String(row["album"] ?? ""),
     duration: Number(row["duration"] ?? 0),
+    keywords: String(row["keywords"] ?? ""),
     addedAt: String(row["added_at"] ?? ""),
   };
 }

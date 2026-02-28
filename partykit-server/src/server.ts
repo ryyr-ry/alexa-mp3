@@ -165,8 +165,8 @@ export default class MusicServer implements Party.Server {
         }
 
         case "update-track": {
-          const { trackId, title, artist, album } = data;
-          const ok = await handleUpdateTrack(this.db, trackId, { title, artist, album });
+          const { trackId, title, artist, album, keywords } = data;
+          const ok = await handleUpdateTrack(this.db, trackId, { title, artist, album, keywords });
           if (!ok) {
             sender.send(
               JSON.stringify({ type: "error", message: "曲が見つかりません" })

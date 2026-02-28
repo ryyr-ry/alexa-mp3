@@ -151,7 +151,7 @@ async function handlePlaySongIntent(
   }
   const tracks = await db.searchTracksByTitle(songName);
   if (tracks.length === 0) {
-    return buildSpeechResponse(`${songName} が見つかりませんでした。`, true);
+    return buildSpeechResponse(`${songName} が見つかりませんでした。`, false);
   }
   const first = tracks[0]!;
   return buildPlayResponse(
@@ -180,7 +180,7 @@ async function handlePlayArtistIntent(
   }
   const tracks = await db.searchTracksByArtist(artistName);
   if (tracks.length === 0) {
-    return buildSpeechResponse(`${artistName} の曲が見つかりませんでした。`, true);
+    return buildSpeechResponse(`${artistName} の曲が見つかりませんでした。`, false);
   }
   const first = tracks[0]!;
   return buildPlayResponse(
@@ -210,12 +210,12 @@ async function handlePlayPlaylistIntent(
   const playlists = await db.searchPlaylistsByName(playlistName);
   const pl = playlists[0];
   if (!pl || pl.trackIds.length === 0) {
-    return buildSpeechResponse(`プレイリスト ${playlistName} が見つかりませんでした。`, true);
+    return buildSpeechResponse(`プレイリスト ${playlistName} が見つかりませんでした。`, false);
   }
   const tracks = await db.getPlaylistTracks(pl.id);
   const first = tracks[0];
   if (!first) {
-    return buildSpeechResponse("プレイリストに曲が含まれていません。", true);
+    return buildSpeechResponse("プレイリストに曲が含まれていません。", false);
   }
   return buildPlayResponse(
     first,
@@ -239,7 +239,7 @@ async function handlePlayAllIntent(
 ): Promise<Record<string, unknown>> {
   const tracks = await db.getTracks();
   if (tracks.length === 0) {
-    return buildSpeechResponse("再生できる曲がありません。", true);
+    return buildSpeechResponse("再生できる曲がありません。", false);
   }
   const first = tracks[0]!;
   return buildPlayResponse(
@@ -284,7 +284,7 @@ async function handleResumeIntent(
   // tokenが無効 → 全曲の先頭から再生
   const tracks = await db.getTracks();
   if (tracks.length === 0) {
-    return buildSpeechResponse("再生できる曲がありません。", true);
+    return buildSpeechResponse("再生できる曲がありません。", false);
   }
   const first = tracks[0]!;
   return buildPlayResponse(
@@ -311,12 +311,12 @@ async function handleNavigateIntent(
   const token = audioPlayer?.token ? decodeToken(audioPlayer.token) : null;
 
   if (!token) {
-    return buildSpeechResponse("現在再生中の曲がありません。", true);
+    return buildSpeechResponse("現在再生中の曲がありません。", false);
   }
   const adjacent = await findAdjacentTrack(db, token, direction);
   if (!adjacent) {
     const msg = direction === "next" ? "次の曲はありません。" : "前の曲はありません。";
-    return buildSpeechResponse(msg, true);
+    return buildSpeechResponse(msg, false);
   }
 
   return buildPlayResponse(
