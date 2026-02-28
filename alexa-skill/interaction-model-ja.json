@@ -1,0 +1,45 @@
+{
+  "interactionModel": {
+    "languageModel": {
+      "invocationName": "マイミュージック",
+      "intents": [
+        {
+          "name": "PlayMusicIntent",
+          "slots": [
+            { "name": "songName", "type": "AMAZON.MusicRecording" },
+            { "name": "artistName", "type": "AMAZON.Artist" },
+            { "name": "playlistName", "type": "AMAZON.MusicPlaylist" }
+          ],
+          "samples": [
+            "{songName} を再生",
+            "{songName} をかけて",
+            "{songName} を流して",
+            "{songName} を聴きたい",
+            "{songName} 再生して",
+            "{artistName} の曲をかけて",
+            "{artistName} の曲を再生",
+            "{artistName} を再生",
+            "{artistName} の曲を流して",
+            "{artistName} を聴きたい",
+            "{playlistName} を再生",
+            "{playlistName} をかけて",
+            "{playlistName} を流して",
+            "{playlistName} を聴きたい",
+            "曲をかけて",
+            "音楽を再生",
+            "何か再生して",
+            "何かかけて"
+          ]
+        },
+        { "name": "AMAZON.PauseIntent", "samples": [] },
+        { "name": "AMAZON.ResumeIntent", "samples": [] },
+        { "name": "AMAZON.NextIntent", "samples": [] },
+        { "name": "AMAZON.PreviousIntent", "samples": [] },
+        { "name": "AMAZON.StopIntent", "samples": [] },
+        { "name": "AMAZON.CancelIntent", "samples": [] },
+        { "name": "AMAZON.HelpIntent", "samples": [] },
+        { "name": "AMAZON.NavigateHomeIntent", "samples": [] }
+      ]
+    }
+  }
+}

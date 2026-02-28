@@ -16,11 +16,7 @@ import {
   handleArchivePlaylist,
 } from "./handlers/playlist-handler";
 import { handleGetCatalog } from "./handlers/catalog-handler";
-import {
-  handleResolveEntity,
-  handleGetNextTrack,
-  handleGetPreviousTrack,
-} from "./handlers/resolve-handler";
+import { handleAlexaRequest } from "./handlers/alexa-handler";
 import { jsonResponse } from "./utils/json-response";
 import { TursoDb } from "./utils/db";
 import { R2Client } from "./utils/r2-client";
@@ -349,30 +345,20 @@ export default class MusicServer implements Party.Server {
       return handleGetCatalog(this.db, catalogMatch[1]);
     }
 
+    // Alexaエンドポイント（AudioPlayer Interface + 標準Skill API）
+    if (path === "/api/alexa" && req.method === "POST") {
+      return this.handleAlexaRoute(req);
+    }
+
     return null;
   }
 
-  /** 保護ルート: Lambda連携（Bearer認証必須） */
+  /** 保護ルート: 認証必須API */
   private async handleProtectedRoutes(
     path: string,
     req: Party.Request
   ): Promise<Response | null> {
     try {
-      if (path === "/api/resolve" && req.method === "POST") {
-        const body = await req.json();
-        return handleResolveEntity(this.db, body as { entityId: string; entityType: string });
-      }
-
-      if (path === "/api/next" && req.method === "POST") {
-        const body = await req.json();
-        return handleGetNextTrack(this.db, body as { currentTrackId: string; playlistId?: string });
-      }
-
-      if (path === "/api/previous" && req.method === "POST") {
-        const body = await req.json();
-        return handleGetPreviousTrack(this.db, body as { currentTrackId: string; playlistId?: string });
-      }
-
       // archive-track（認証必須）
       const archiveTrackMatch = path.match(/^\/api\/tracks\/([^/]+)\/archive$/);
       if (archiveTrackMatch?.[1] && req.method === "POST") {
@@ -392,6 +378,43 @@ export default class MusicServer implements Party.Server {
     } catch (err) {
       console.error("[Protected] リクエスト処理エラー:", err);
       return jsonResponse({ error: "Bad Request" }, 400, { corsOrigin: null });
+    }
+  }
+
+  // ===========================================================
+  // アートワーク保存ヘルパー
+  // ===========================================================
+
+  // ===========================================================
+  // Alexa HTTP ルート
+  // ===========================================================
+
+  private async handleAlexaRoute(req: Party.Request): Promise<Response> {
+    try {
+      const body = await req.json() as Parameters<typeof handleAlexaRequest>[1];
+      const baseUrl = new URL(req.url);
+      // PartyKitのURL構造からベースURLを組み立てる
+      const fullPath = baseUrl.pathname;
+      const apiIdx = fullPath.indexOf("/api/");
+      const prefix = apiIdx !== -1 ? fullPath.slice(0, apiIdx) : "";
+      const origin = `${baseUrl.protocol}//${baseUrl.host}${prefix}`;
+
+      const urlBuilder = {
+        mp3: (trackId: string) => `${origin}/api/mp3/${encodeURIComponent(trackId)}.mp3`,
+        art: (trackId: string) => `${origin}/api/art/${encodeURIComponent(trackId)}.jpg`,
+      };
+
+      const result = await handleAlexaRequest(this.db, body, urlBuilder);
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch (err) {
+      console.error("[Alexa] リクエスト処理エラー:", err);
+      return new Response(
+        JSON.stringify({ version: "1.0", response: {} }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
     }
   }
 
