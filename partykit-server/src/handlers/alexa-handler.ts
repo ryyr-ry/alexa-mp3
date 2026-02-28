@@ -210,7 +210,7 @@ async function handlePlayPlaylistIntent(
   const playlists = await db.searchPlaylistsByName(playlistName);
   const pl = playlists[0];
   if (!pl || pl.trackIds.length === 0) {
-    return buildSpeechResponse(`プレイリスト ${playlistName} が見つかりませんでした。`, false);
+    return buildSpeechResponse(`「${playlistName}」というプレイリストが見つかりませんでした。`, false);
   }
   const tracks = await db.getPlaylistTracks(pl.id);
   const first = tracks[0];

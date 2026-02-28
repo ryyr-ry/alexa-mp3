@@ -483,8 +483,9 @@ export class TursoDb {
     return rs.rows.map(rowToTrack);
   }
 
-  /** プレイリスト名でLIKE部分一致検索 */
+  /** プレイリスト名でLIKE部分一致検索（スペース正規化） */
   async searchPlaylistsByName(query: string): Promise<Playlist[]> {
+    const normalized = query.replace(/\s+/g, "");
     const rs = await this.client.execute({
       sql: `SELECT p.id, p.name, p.created_at, p.updated_at,
                    (SELECT GROUP_CONCAT(track_id, ',')
@@ -492,9 +493,9 @@ export class TursoDb {
                           WHERE playlist_id = p.id ORDER BY position)
                    ) AS track_ids
             FROM playlists p
-            WHERE p.name LIKE ?
+            WHERE REPLACE(p.name, ' ', '') LIKE ?
             ORDER BY p.created_at DESC`,
-      args: [`%${query}%`],
+      args: [`%${normalized}%`],
     });
     return rs.rows.map(rowToPlaylist);
   }
