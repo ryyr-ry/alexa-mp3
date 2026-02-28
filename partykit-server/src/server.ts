@@ -339,8 +339,6 @@ export default class MusicServer implements Party.Server {
       return handleGetPlaylist(this.db, decodeURIComponent(plMatch[1]));
     }
 
-
-
     // Alexaエンドポイント（AudioPlayer Interface + 標準Skill API）
     if (path === "/api/alexa" && req.method === "POST") {
       return this.handleAlexaRoute(req);
@@ -376,8 +374,6 @@ export default class MusicServer implements Party.Server {
       return jsonResponse({ error: "Bad Request" }, 400, { corsOrigin: null });
     }
   }
-
-
 
   // ===========================================================
   // Alexa HTTP ルート

@@ -344,20 +344,22 @@ export class TursoDb {
 
   // ===== Alexa検索 =====
 
-  /** 曲名でLIKE部分一致検索 */
+  /** 曲名でLIKE部分一致検索（スペース正規化） */
   async searchTracksByTitle(query: string): Promise<Track[]> {
+    const normalized = query.replace(/\s+/g, "");
     const rs = await this.client.execute({
-      sql: "SELECT * FROM tracks WHERE title LIKE ? ORDER BY added_at DESC",
-      args: [`%${query}%`],
+      sql: "SELECT * FROM tracks WHERE REPLACE(title, ' ', '') LIKE ? ORDER BY added_at DESC",
+      args: [`%${normalized}%`],
     });
     return rs.rows.map(rowToTrack);
   }
 
-  /** アーティスト名でLIKE部分一致検索 */
+  /** アーティスト名でLIKE部分一致検索（スペース正規化） */
   async searchTracksByArtist(query: string): Promise<Track[]> {
+    const normalized = query.replace(/\s+/g, "");
     const rs = await this.client.execute({
-      sql: "SELECT * FROM tracks WHERE artist LIKE ? ORDER BY added_at DESC",
-      args: [`%${query}%`],
+      sql: "SELECT * FROM tracks WHERE REPLACE(artist, ' ', '') LIKE ? ORDER BY added_at DESC",
+      args: [`%${normalized}%`],
     });
     return rs.rows.map(rowToTrack);
   }

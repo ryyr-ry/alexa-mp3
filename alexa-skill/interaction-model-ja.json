@@ -24,8 +24,7 @@
           "samples": [
             "{artistName} の曲をかけて",
             "{artistName} の曲を再生",
-            "{artistName} の曲を流して",
-            "{artistName} を聴きたい"
+            "{artistName} の曲を流して"
           ]
         },
         {
