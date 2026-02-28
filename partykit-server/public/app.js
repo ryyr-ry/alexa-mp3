@@ -15,6 +15,7 @@ function artUrl(trackId) {
 let state = { activeTracks: [], playlists: [], artists: [] };
 let ws = null;
 let searchQuery = "";
+let sessionToken = null;
 
 // ---------- DOM ----------
 const $ = (sel) => document.querySelector(sel);
@@ -125,8 +126,8 @@ async function safeSend(data, maxRetries = 5) {
 }
 
 function connect() {
-  const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  ws = new WebSocket(`${proto}//${PARTYKIT_HOST}/party/${ROOM_ID}`);
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  ws = new WebSocket(`${proto}://${PARTYKIT_HOST}/party/${ROOM_ID}?token=${encodeURIComponent(sessionToken || "")}`);
 
   ws.onopen = () => {
     connectionDot.className = "conn-dot connected";
@@ -134,8 +135,17 @@ function connect() {
     reconnectAttempts = 0;
   };
 
-  ws.onclose = () => {
+  ws.onclose = (ev) => {
     connectionDot.className = "conn-dot disconnected";
+    // セッション無効（4001 Unauthorized）→ 認証画面に戻す
+    if (ev.code === 4001) {
+      localStorage.removeItem("session");
+      sessionToken = null;
+      appMain.hidden = true;
+      authScreen.hidden = false;
+      boot();
+      return;
+    }
     reconnectAttempts++;
     const delay = Math.min(3000 * reconnectAttempts, 15000);
     if (connectionText) connectionText.textContent = `再接続中 (${Math.ceil(delay/1000)}秒後)...`;
@@ -907,7 +917,175 @@ function setupArtistAutocomplete(input, wrap) {
 }
 
 // =====================================================
+// 認証
+// =====================================================
+const authScreen = $("#authScreen");
+const authSetup = $("#authSetup");
+const authLogin = $("#authLogin");
+const authError = $("#authError");
+const appMain = $("#appMain");
+
+function apiUrl(path) {
+  return `/party/${ROOM_ID}${path}`;
+}
+
+function showAuthError(msg) {
+  authError.textContent = msg;
+  authError.hidden = false;
+}
+function hideAuthError() { authError.hidden = true; }
+
+function b64urlToUint8(str) {
+  const padded = str.replace(/-/g, "+").replace(/_/g, "/");
+  const bin = atob(padded);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+function uint8ToB64url(bytes) {
+  let bin = "";
+  for (const b of new Uint8Array(bytes)) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function credentialToJSON(cred) {
+  const response = {};
+  if (cred.response.attestationObject) response.attestationObject = uint8ToB64url(cred.response.attestationObject);
+  if (cred.response.clientDataJSON) response.clientDataJSON = uint8ToB64url(cred.response.clientDataJSON);
+  if (cred.response.authenticatorData) response.authenticatorData = uint8ToB64url(cred.response.authenticatorData);
+  if (cred.response.signature) response.signature = uint8ToB64url(cred.response.signature);
+  if (cred.response.userHandle) response.userHandle = uint8ToB64url(cred.response.userHandle);
+  if (cred.response.getTransports) response.transports = cred.response.getTransports();
+  return {
+    id: cred.id,
+    rawId: uint8ToB64url(cred.rawId),
+    response,
+    type: cred.type,
+    clientExtensionResults: cred.getClientExtensionResults(),
+    authenticatorAttachment: cred.authenticatorAttachment,
+  };
+}
+
+async function registerPasskey(userName) {
+  hideAuthError();
+  const btn = $("#setupBtn");
+  btn.disabled = true;
+  btn.textContent = "登録中…";
+  try {
+    const optRes = await fetch(apiUrl("/api/auth/register-options"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userName }),
+    });
+    if (!optRes.ok) { const e = await optRes.json(); throw new Error(e.error || "失敗"); }
+    const optData = await optRes.json();
+    const { options, challengeId, userId } = optData;
+    options.challenge = b64urlToUint8(options.challenge);
+    options.user.id = b64urlToUint8(options.user.id);
+    if (options.excludeCredentials) {
+      options.excludeCredentials = options.excludeCredentials.map((c) => ({ ...c, id: b64urlToUint8(c.id) }));
+    }
+    const credential = await navigator.credentials.create({ publicKey: options });
+    if (!credential) throw new Error("パスキーの作成がキャンセルされました");
+    const verifyRes = await fetch(apiUrl("/api/auth/register-verify"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ challengeId, userId, userName, credential: credentialToJSON(credential) }),
+    });
+    const result = await verifyRes.json();
+    if (!result.verified) throw new Error(result.error || "検証失敗");
+    localStorage.setItem("session", result.token);
+    startApp(result.token);
+  } catch (err) {
+    console.error("[Auth] Register:", err);
+    showAuthError(err.message || "登録に失敗しました");
+    btn.disabled = false;
+    btn.innerHTML = 'パスキーを登録';
+  }
+}
+
+async function loginPasskey() {
+  hideAuthError();
+  const btn = $("#loginBtn");
+  btn.disabled = true;
+  btn.textContent = "認証中…";
+  try {
+    const optRes = await fetch(apiUrl("/api/auth/login-options"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!optRes.ok) throw new Error("ログインオプション取得失敗");
+    const { options, challengeId } = await optRes.json();
+    options.challenge = b64urlToUint8(options.challenge);
+    if (options.allowCredentials) {
+      options.allowCredentials = options.allowCredentials.map((c) => ({ ...c, id: b64urlToUint8(c.id) }));
+    }
+    const credential = await navigator.credentials.get({ publicKey: options });
+    if (!credential) throw new Error("認証がキャンセルされました");
+    const verifyRes = await fetch(apiUrl("/api/auth/login-verify"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ challengeId, credential: credentialToJSON(credential) }),
+    });
+    const result = await verifyRes.json();
+    if (!result.verified) throw new Error(result.error || "認証失敗");
+    localStorage.setItem("session", result.token);
+    startApp(result.token);
+  } catch (err) {
+    console.error("[Auth] Login:", err);
+    showAuthError(err.message || "ログインに失敗しました");
+    btn.disabled = false;
+    btn.innerHTML = 'ログイン';
+  }
+}
+
+function startApp(token) {
+  sessionToken = token;
+  authScreen.hidden = true;
+  appMain.hidden = false;
+  connect();
+}
+
+$("#setupBtn").addEventListener("click", () => {
+  const userName = $("#setupUserName").value.trim();
+  if (!userName) return $("#setupUserName").focus();
+  registerPasskey(userName);
+});
+$("#setupUserName").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); $("#setupBtn").click(); }
+});
+$("#loginBtn").addEventListener("click", () => loginPasskey());
+
+// =====================================================
 // 起動
 // =====================================================
-connect();
+async function boot() {
+  const saved = localStorage.getItem("session");
+  if (saved) {
+    try {
+      const res = await fetch(apiUrl("/api/tracks"), { headers: { Authorization: `Bearer ${saved}` } });
+      if (res.ok) { startApp(saved); return; }
+    } catch { /* ignore */ }
+    localStorage.removeItem("session");
+  }
+  try {
+    const res = await fetch(apiUrl("/api/auth/status"));
+    const data = await res.json();
+    if (data.status === "needs-setup") {
+      authSetup.hidden = false;
+      authLogin.hidden = true;
+      $("#setupUserName").focus();
+    } else {
+      authSetup.hidden = true;
+      authLogin.hidden = false;
+      if (data.userName) $("#authGreeting").textContent = `おかえり、${data.userName}`;
+    }
+  } catch (err) {
+    console.error("[Auth] Status:", err);
+    showAuthError("サーバーに接続できません");
+  }
+}
+
+boot();
 

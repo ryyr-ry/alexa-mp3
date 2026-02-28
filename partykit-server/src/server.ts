@@ -21,8 +21,16 @@ import {
   handleUpdateArtist,
   handleArchiveArtist,
 } from "./handlers/artist-handler";
+import {
+  handleAuthStatus,
+  handleRegisterOptions,
+  handleRegisterVerify,
+  handleLoginOptions,
+  handleLoginVerify,
+} from "./handlers/auth-handler";
 import { handleAlexaRequest } from "./handlers/alexa-handler";
 import { jsonResponse } from "./utils/json-response";
+import { verifySessionToken } from "./utils/session";
 import { TursoDb } from "./utils/db";
 import { R2Client } from "./utils/r2-client";
 
@@ -106,6 +114,16 @@ export default class MusicServer implements Party.Server {
 
   async onConnect(conn: Party.Connection): Promise<void> {
     await this.ensureInitialized();
+
+    // WebSocket接続時のセッショントークン検証
+    const url = new URL(conn.uri ?? "", "http://localhost");
+    const token = url.searchParams.get("token");
+    if (!token || !(await verifySessionToken(token, this.apiSecret))) {
+      console.warn(`[WS] 未認証接続拒否: ${conn.id}`);
+      conn.close(4001, "Unauthorized");
+      return;
+    }
+
     console.log(`[WS] 接続: ${conn.id}`);
     const [tracks, playlists, artists] = await Promise.all([
       this.db.getTracks(),
@@ -319,39 +337,109 @@ export default class MusicServer implements Party.Server {
     const apiIdx = fullPath.indexOf("/api/");
     const path = apiIdx !== -1 ? fullPath.slice(apiIdx) : fullPath;
 
-    // --- 公開API（認証不要） ---
-    const publicResult = await this.handlePublicRoutes(path, req);
-    if (publicResult) return publicResult;
+    // --- レイヤ1: 認証ルート（トークン不要） ---
+    const authResult = await this.handleAuthRoutes(path, req);
+    if (authResult) return authResult;
 
-    // --- 認証必須API ---
-    if (!this.isAuthorized(req)) {
-      return jsonResponse({ error: "Unauthorized" }, 401, { corsOrigin: null });
+    // --- レイヤ1: Alexaエンドポイント（トークン不要） ---
+    if (path === "/api/alexa" && req.method === "POST") {
+      return this.handleAlexaRoute(req);
     }
-    const protectedResult = await this.handleProtectedRoutes(path, req);
-    if (protectedResult) {
-      // 保護ルートはサーバー間通信のみ。CORSヘッダーを除去
-      protectedResult.headers.delete("Access-Control-Allow-Origin");
-      return protectedResult;
+
+    // --- レイヤ1: メディア配信（トークン不要）---
+    // AlexaのAudioPlayerがMP3/ArtのURLを直接フェッチするため認証を付けられない。
+    // URLはUUID形式で推測困難。
+    const mediaResult = await this.handleMediaRoutes(path, req);
+    if (mediaResult) return mediaResult;
+
+    // --- レイヤ2: セッショントークン検証（全データAPI） ---
+    const token = this.extractSessionToken(req);
+    if (!token || !(await verifySessionToken(token, this.apiSecret))) {
+      return jsonResponse({ error: "Unauthorized" }, 401);
+    }
+
+    // セッション認証済み — データAPI
+    const dataResult = await this.handleDataRoutes(path, req);
+    if (dataResult) return dataResult;
+
+    // --- レイヤ3: API_SECRET保護ルート（サーバー間通信） ---
+    if (this.isAuthorized(req)) {
+      const protectedResult = await this.handleProtectedRoutes(path, req);
+      if (protectedResult) return protectedResult;
     }
 
     return new Response("Not Found", { status: 404, headers: CORS_HEADERS });
   }
 
-  /** 公開ルート: UI用REST + メディア配信 */
-  private async handlePublicRoutes(
+  /** セッショントークン抽出（Cookie or Authorizationヘッダー） */
+  private extractSessionToken(req: Party.Request): string | null {
+    // Authorization: Bearer {token}
+    const auth = req.headers.get("Authorization");
+    if (auth?.startsWith("Bearer ")) {
+      const t = auth.slice(7);
+      // API_SECRETとの衝突を避ける: session tokenは「.」を含む
+      if (t.includes(".")) return t;
+    }
+    // Cookie: session={token}
+    const cookies = req.headers.get("Cookie") ?? "";
+    const match = cookies.match(/(?:^|;)\s*session=([^;]+)/);
+    return match?.[1] ?? null;
+  }
+
+  // ===========================================================
+  // 認証ルート
+  // ===========================================================
+
+  private async handleAuthRoutes(
     path: string,
-    req: Party.Request
+    req: Party.Request,
   ): Promise<Response | null> {
-    // --- メディア配信（DB不要） ---
+    if (!path.startsWith("/api/auth/")) return null;
+
+    const url = new URL(req.url);
+    const rpId = url.hostname;
+    const expectedOrigin = `${url.protocol}//${url.host}`;
+
+    if (path === "/api/auth/status" && req.method === "GET") {
+      return handleAuthStatus(this.db);
+    }
+    if (path === "/api/auth/register-options" && req.method === "POST") {
+      const body = (await req.json()) as { userName: string };
+      return handleRegisterOptions(this.db, rpId, body);
+    }
+    if (path === "/api/auth/register-verify" && req.method === "POST") {
+      const body = (await req.json()) as {
+        challengeId: string; userId: string; userName: string; credential: unknown;
+      };
+      return handleRegisterVerify(this.db, rpId, expectedOrigin, this.apiSecret, body);
+    }
+    if (path === "/api/auth/login-options" && req.method === "POST") {
+      return handleLoginOptions(this.db, rpId);
+    }
+    if (path === "/api/auth/login-verify" && req.method === "POST") {
+      const body = (await req.json()) as { challengeId: string; credential: unknown };
+      return handleLoginVerify(this.db, rpId, expectedOrigin, this.apiSecret, body);
+    }
+    return null;
+  }
+
+  // ===========================================================
+  // データAPI（セッション認証後）
+  // ===========================================================
+
+  /** メディア配信（Alexa AudioPlayer互換のため認証不要） */
+  private async handleMediaRoutes(
+    path: string,
+    req: Party.Request,
+  ): Promise<Response | null> {
     const mp3Match = path.match(/^\/api\/mp3\/([^/]+)$/);
     if (mp3Match?.[1] && req.method === "GET") {
       const trackId = decodeURIComponent(mp3Match[1].replace(/\.mp3$/, ""));
       const data = await this.r2.get(`mp3/${trackId}.mp3`);
-      if (!data) return new Response("Not Found", { status: 404, headers: CORS_HEADERS });
+      if (!data) return new Response("Not Found", { status: 404 });
       return new Response(data.data, {
         headers: {
           "Content-Type": "audio/mpeg",
-          "Access-Control-Allow-Origin": "*",
           "Cache-Control": "public, max-age=86400",
         },
       });
@@ -361,42 +449,39 @@ export default class MusicServer implements Party.Server {
     if (artMatch?.[1] && req.method === "GET") {
       const trackId = decodeURIComponent(artMatch[1].replace(/\.\w+$/, ""));
       const result = await this.r2.get(`art/${trackId}.jpg`);
-      if (!result) return new Response("Not Found", { status: 404, headers: CORS_HEADERS });
+      if (!result) return new Response("Not Found", { status: 404 });
       return new Response(result.data, {
         headers: {
           "Content-Type": result.contentType,
-          "Access-Control-Allow-Origin": "*",
           "Cache-Control": "public, max-age=86400",
         },
       });
     }
 
-    // --- データAPI ---
+    return null;
+  }
+
+  private async handleDataRoutes(
+    path: string,
+    req: Party.Request,
+  ): Promise<Response | null> {
+    // データAPI
     if (path === "/api/tracks" && req.method === "GET") {
       return handleGetTracks(this.db);
     }
-
     const trackMatch = path.match(/^\/api\/tracks\/([^/]+)$/);
     if (trackMatch?.[1] && req.method === "GET") {
       return handleGetTrack(this.db, decodeURIComponent(trackMatch[1]));
     }
-
     if (path === "/api/playlists" && req.method === "GET") {
       return handleGetPlaylists(this.db);
     }
-
     const plMatch = path.match(/^\/api\/playlists\/([^/]+)$/);
     if (plMatch?.[1] && req.method === "GET") {
       return handleGetPlaylist(this.db, decodeURIComponent(plMatch[1]));
     }
-
     if (path === "/api/artists" && req.method === "GET") {
       return handleGetArtists(this.db);
-    }
-
-    // Alexaエンドポイント（AudioPlayer Interface + 標準Skill API）
-    if (path === "/api/alexa" && req.method === "POST") {
-      return this.handleAlexaRoute(req);
     }
 
     return null;

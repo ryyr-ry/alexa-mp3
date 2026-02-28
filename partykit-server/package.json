@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@libsql/client": "^0.17.0",
+    "@simplewebauthn/server": "^11.0.0",
     "partykit": "^0.0.115",
     "partysocket": "^1.1.16"
   },

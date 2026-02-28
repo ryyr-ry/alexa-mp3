@@ -74,6 +74,21 @@ export class TursoDb {
         position INTEGER NOT NULL,
         PRIMARY KEY (playlist_id, track_id)
       );
+      CREATE TABLE IF NOT EXISTS webauthn_credentials (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        user_name TEXT NOT NULL,
+        public_key TEXT NOT NULL,
+        counter INTEGER NOT NULL DEFAULT 0,
+        transports TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS auth_challenges (
+        id TEXT PRIMARY KEY,
+        challenge TEXT NOT NULL,
+        type TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
     `);
 
     // マイグレーション: 既存tracksからアーティストを自動生成
@@ -498,6 +513,93 @@ export class TursoDb {
       args: [`%${normalized}%`],
     });
     return rs.rows.map(rowToPlaylist);
+  }
+
+  // ===== WebAuthn =====
+
+  /** 登録済みクレデンシャル数を取得（先着1名判定用） */
+  async getCredentialCount(): Promise<number> {
+    const rs = await this.client.execute("SELECT COUNT(*) as cnt FROM webauthn_credentials");
+    return Number(rs.rows[0]?.["cnt"] ?? 0);
+  }
+
+  /** 登録済みユーザー名を取得（ログイン画面表示用） */
+  async getUserName(): Promise<string | null> {
+    const rs = await this.client.execute("SELECT user_name FROM webauthn_credentials LIMIT 1");
+    const row = rs.rows[0];
+    return row ? String(row["user_name"]) : null;
+  }
+
+  /** 全クレデンシャル取得（allowCredentials生成用） */
+  async getCredentials(): Promise<Array<{ id: string; transports: string }>> {
+    const rs = await this.client.execute("SELECT id, transports FROM webauthn_credentials");
+    return rs.rows.map((row) => ({
+      id: String(row["id"] ?? ""),
+      transports: String(row["transports"] ?? ""),
+    }));
+  }
+
+  /** IDでクレデンシャル取得（認証検証用） */
+  async getCredentialById(credId: string): Promise<{
+    id: string; userId: string; publicKey: string; counter: number; transports: string;
+  } | null> {
+    const rs = await this.client.execute({
+      sql: "SELECT * FROM webauthn_credentials WHERE id = ?",
+      args: [credId],
+    });
+    const row = rs.rows[0];
+    if (!row) return null;
+    return {
+      id: String(row["id"]),
+      userId: String(row["user_id"]),
+      publicKey: String(row["public_key"]),
+      counter: Number(row["counter"] ?? 0),
+      transports: String(row["transports"] ?? ""),
+    };
+  }
+
+  /** クレデンシャル保存 */
+  async saveCredential(cred: {
+    id: string; userId: string; userName: string;
+    publicKey: string; counter: number; transports: string;
+  }): Promise<void> {
+    await this.client.execute({
+      sql: `INSERT INTO webauthn_credentials (id, user_id, user_name, public_key, counter, transports)
+            VALUES (?, ?, ?, ?, ?, ?)`,
+      args: [cred.id, cred.userId, cred.userName, cred.publicKey, cred.counter, cred.transports],
+    });
+  }
+
+  /** カウンター更新 */
+  async updateCredentialCounter(credId: string, counter: number): Promise<void> {
+    await this.client.execute({
+      sql: "UPDATE webauthn_credentials SET counter = ? WHERE id = ?",
+      args: [counter, credId],
+    });
+  }
+
+  /** チャレンジ一時保存 */
+  async saveChallenge(id: string, challenge: string, type: string): Promise<void> {
+    // 古いチャレンジを削除（5分以上前）
+    await this.client.execute(
+      "DELETE FROM auth_challenges WHERE created_at < datetime('now', '-5 minutes')"
+    );
+    await this.client.execute({
+      sql: "INSERT OR REPLACE INTO auth_challenges (id, challenge, type) VALUES (?, ?, ?)",
+      args: [id, challenge, type],
+    });
+  }
+
+  /** チャレンジ取得＆削除（1回限り使用、5分以内のみ有効） */
+  async getAndDeleteChallenge(id: string): Promise<string | null> {
+    const rs = await this.client.execute({
+      sql: `SELECT challenge FROM auth_challenges
+            WHERE id = ? AND created_at >= datetime('now', '-5 minutes')`,
+      args: [id],
+    });
+    // 取得成功・失敗に関わらず削除（ワンタイム）
+    await this.client.execute({ sql: "DELETE FROM auth_challenges WHERE id = ?", args: [id] });
+    return rs.rows[0] ? String(rs.rows[0]["challenge"]) : null;
   }
 }
 
