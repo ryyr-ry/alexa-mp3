@@ -273,7 +273,7 @@ export default class MusicServer implements Party.Server {
     const publicResult = await this.handlePublicRoutes(path, req);
     if (publicResult) return publicResult;
 
-    // --- Lambda連携API（認証必須） ---
+    // --- 認証必須API ---
     if (!this.isAuthorized(req)) {
       return jsonResponse({ error: "Unauthorized" }, 401, { corsOrigin: null });
     }
@@ -381,9 +381,7 @@ export default class MusicServer implements Party.Server {
     }
   }
 
-  // ===========================================================
-  // アートワーク保存ヘルパー
-  // ===========================================================
+
 
   // ===========================================================
   // Alexa HTTP ルート

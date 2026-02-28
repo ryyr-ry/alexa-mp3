@@ -6,9 +6,9 @@
         {
           "name": "PlayMusicIntent",
           "slots": [
-            { "name": "songName", "type": "AMAZON.MusicRecording" },
-            { "name": "artistName", "type": "AMAZON.Artist" },
-            { "name": "playlistName", "type": "AMAZON.MusicPlaylist" }
+            { "name": "songName", "type": "AMAZON.SearchQuery" },
+            { "name": "artistName", "type": "AMAZON.SearchQuery" },
+            { "name": "playlistName", "type": "AMAZON.SearchQuery" }
           ],
           "samples": [
             "{songName} を再生",
@@ -18,13 +18,11 @@
             "{songName} 再生して",
             "{artistName} の曲をかけて",
             "{artistName} の曲を再生",
-            "{artistName} を再生",
             "{artistName} の曲を流して",
-            "{artistName} を聴きたい",
-            "{playlistName} を再生",
-            "{playlistName} をかけて",
-            "{playlistName} を流して",
-            "{playlistName} を聴きたい",
+            "プレイリスト {playlistName} を再生",
+            "プレイリスト {playlistName} をかけて",
+            "プレイリスト {playlistName} を流して",
+            "プレイリスト {playlistName} を聴きたい",
             "曲をかけて",
             "音楽を再生",
             "何か再生して",

@@ -68,7 +68,7 @@ export async function handleAlexaRequest(
 
   // --- AudioPlayer系イベント ---
   if (requestType.startsWith("AudioPlayer.")) {
-    return handleAudioPlayerEvent(db, request, context, urlBuilder);
+    return handleAudioPlayerEvent(db, request, urlBuilder);
   }
 
   // --- PlaybackController（物理ボタン） ---
@@ -195,7 +195,7 @@ async function handlePlayMusicIntent(
       first,
       urlBuilder.mp3(first.id),
       urlBuilder.art(first.id),
-      { trackId: first.id, context: "all" },
+      { trackId: first.id, context: "single" },
       "REPLACE_ALL",
       0,
       undefined,
@@ -303,7 +303,6 @@ async function handleNavigateIntent(
 async function handleAudioPlayerEvent(
   db: TursoDb,
   request: AlexaRequest["request"],
-  _context: AlexaRequest["context"],
   urlBuilder: UrlBuilder,
 ): Promise<Record<string, unknown>> {
   // PlaybackNearlyFinished → 次の曲をENQUEUE
@@ -409,6 +408,8 @@ async function findAdjacentTrack(
   token: PlaybackToken,
   direction: "next" | "previous",
 ): Promise<Track | null> {
+  if (token.context === "single") return null;
+
   let trackList: string[];
 
   if (token.context.startsWith("playlist::")) {
