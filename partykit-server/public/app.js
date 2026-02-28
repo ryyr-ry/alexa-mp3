@@ -12,7 +12,7 @@ function artUrl(trackId) {
 }
 
 // ---------- 状態 ----------
-let state = { activeTracks: [], playlists: [] };
+let state = { activeTracks: [], playlists: [], artists: [] };
 let ws = null;
 let searchQuery = "";
 
@@ -158,6 +158,7 @@ function connect() {
       state = msg.state;
       renderTracks();
       renderPlaylists();
+      renderArtists();
     }
 
     if (msg.type === "track-added" && pendingUploads.length > 0) {
@@ -474,7 +475,8 @@ document.querySelectorAll(".nav-item").forEach((btn) => {
     btn.classList.add("active");
     const tab = btn.dataset.tab;
     document.getElementById(`${tab}Tab`).classList.add("active");
-    pageTitle.textContent = tab === "tracks" ? "すべての曲" : "プレイリスト";
+    const titles = { tracks: "すべての曲", playlists: "プレイリスト", artists: "アーティスト" };
+    pageTitle.textContent = titles[tab] || tab;
   });
 });
 
@@ -582,7 +584,9 @@ function startEditTrack(trackId) {
 
   meta.innerHTML = `
     <input class="edit-input edit-title" value="${esc(origTitle)}" placeholder="曲名">
-    <input class="edit-input edit-artist" value="${esc(origArtist)}" placeholder="アーティスト">`;
+    <div class="autocomplete-wrap">
+      <input class="edit-input edit-artist" value="${esc(origArtist)}" placeholder="アーティスト" autocomplete="off">
+    </div>`;
   if (albumEl) {
     albumEl.innerHTML = `<input class="edit-input edit-album" value="${esc(origAlbum)}" placeholder="アルバム">`;
   }
@@ -590,6 +594,11 @@ function startEditTrack(trackId) {
   const titleInput = meta.querySelector(".edit-title");
   titleInput.focus();
   titleInput.select();
+
+  // アーティストオートコンプリート
+  const artistInput = meta.querySelector(".edit-artist");
+  const acWrap = meta.querySelector(".autocomplete-wrap");
+  setupArtistAutocomplete(artistInput, acWrap);
 
   let saved = false;
 
@@ -667,6 +676,238 @@ function enableDragSort(container) {
 
 
 // =====================================================
+// アーティスト
+// =====================================================
+const artistList = $("#artistList");
+const artistModal = $("#artistModal");
+const artistNameInput = $("#artistNameInput");
+const keywordInput = $("#keywordInput");
+const keywordTags = $("#keywordTags");
+const keywordTagWrap = $("#keywordTagWrap");
+const artistTrackList = $("#artistTrackList");
+let editingArtistId = null;
+let currentKeywords = [];
+
+/** artist_idのハッシュ値から一意のグラデーション角度と色相を算出 */
+function artistGradient(artistId) {
+  let h = 0;
+  for (let i = 0; i < artistId.length; i++) h = (h * 31 + artistId.charCodeAt(i)) & 0xffffffff;
+  const hue1 = h % 360;
+  const hue2 = (hue1 + 40 + (h >> 8) % 40) % 360;
+  const angle = (h >> 16) % 360;
+  return `linear-gradient(${angle}deg, hsla(${hue1},70%,50%,0.25), hsla(${hue2},70%,45%,0.2))`;
+}
+
+function renderArtists() {
+  if (!state.artists || !state.artists.length) {
+    artistList.innerHTML = `
+      <div class="empty" style="grid-column: 1/-1">
+        <div class="empty-icon">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </div>
+        <p class="empty-title">アーティストがいません</p>
+        <p class="empty-sub">曲をアップロードすると自動で追加されます</p>
+      </div>`;
+    return;
+  }
+
+  artistList.innerHTML = state.artists.map((a) => {
+    const keywords = a.keywords ? a.keywords.split(",").filter(Boolean) : [];
+    const pills = keywords.map((kw) =>
+      `<span class="artist-keyword-pill">${esc(kw.trim())}</span>`
+    ).join("");
+    return `
+      <div class="artist-card" data-artist-id="${esc(a.id)}" data-artist-name="${esc(a.name)}">
+        <button class="artist-card-remove" data-action="archive-artist" title="削除">✕</button>
+        <div class="artist-card-art" style="background:${artistGradient(a.id)}">♪</div>
+        <div class="artist-card-name">${esc(a.name)}</div>
+        <div class="artist-card-keywords">${pills || '<span style="color:var(--text-tertiary);font-size:11px">キーワード未設定</span>'}</div>
+        <div class="artist-card-count">${a.trackCount}曲</div>
+      </div>`;
+  }).join("");
+
+  artistList.querySelectorAll(".artist-card").forEach((card) => {
+    card.addEventListener("click", (e) => {
+      if (e.target.closest("[data-action='archive-artist']")) return;
+      openArtistModal(card.dataset.artistId);
+    });
+  });
+  artistList.querySelectorAll("[data-action='archive-artist']").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const card = btn.closest(".artist-card");
+      if (card) archiveArtistAction(card.dataset.artistId, card.dataset.artistName);
+    });
+  });
+}
+
+async function archiveArtistAction(id, name) {
+  const confirmed = await confirmAction(`アーティスト「${name}」を削除しますか？所属曲は「不明なアーティスト」に変更されます。`);
+  if (!confirmed) return;
+  safeSend(JSON.stringify({ type: "archive-artist", artistId: id }));
+}
+
+// --- アーティストモーダル ---
+$("#createArtistBtn").addEventListener("click", () => openArtistModal());
+$("#cancelArtist").addEventListener("click", () => { artistModal.hidden = true; });
+artistModal.addEventListener("click", (e) => {
+  if (e.target === artistModal) artistModal.hidden = true;
+});
+
+function openArtistModal(artistId = null) {
+  const artist = artistId ? state.artists.find((a) => a.id === artistId) : null;
+  editingArtistId = artist?.id ?? null;
+
+  const title = $("#artistModalTitle");
+  const saveBtn = $("#saveArtist");
+  if (title) title.textContent = artist ? "アーティスト編集" : "新規アーティスト";
+  if (saveBtn) saveBtn.textContent = artist ? "保存" : "作成";
+
+  artistNameInput.value = artist?.name ?? "";
+  currentKeywords = artist?.keywords ? artist.keywords.split(",").filter(Boolean).map((s) => s.trim()) : [];
+  renderKeywordTags();
+
+  // 所属曲
+  if (artist) {
+    const tracks = state.activeTracks.filter((t) => t.artistId === artist.id);
+    if (tracks.length > 0) {
+      artistTrackList.innerHTML = `
+        <div class="artist-track-list-title">所属曲 (${tracks.length})</div>
+        ${tracks.map((t) => `<div class="artist-track-item"><span class="artist-track-item-title">${esc(t.title)}</span></div>`).join("")}`;
+    } else {
+      artistTrackList.innerHTML = "";
+    }
+  } else {
+    artistTrackList.innerHTML = "";
+  }
+
+  artistModal.hidden = false;
+  artistNameInput.focus();
+}
+
+function renderKeywordTags() {
+  keywordTags.innerHTML = currentKeywords.map((kw, i) =>
+    `<span class="tag-pill">${esc(kw)}<button class="tag-pill-remove" data-idx="${i}">✕</button></span>`
+  ).join("");
+  keywordTags.querySelectorAll(".tag-pill-remove").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      currentKeywords.splice(Number(btn.dataset.idx), 1);
+      renderKeywordTags();
+    });
+  });
+}
+
+keywordInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === ",") {
+    e.preventDefault();
+    addKeywordFromInput();
+  }
+  if (e.key === "Backspace" && !keywordInput.value && currentKeywords.length > 0) {
+    currentKeywords.pop();
+    renderKeywordTags();
+  }
+});
+
+keywordInput.addEventListener("blur", () => addKeywordFromInput());
+keywordTagWrap.addEventListener("click", () => keywordInput.focus());
+
+function addKeywordFromInput() {
+  const val = keywordInput.value.replace(/,/g, "").trim();
+  if (val && !currentKeywords.includes(val)) {
+    currentKeywords.push(val);
+    renderKeywordTags();
+  }
+  keywordInput.value = "";
+}
+
+$("#saveArtist").addEventListener("click", () => {
+  const name = artistNameInput.value.trim();
+  if (!name) return artistNameInput.focus();
+
+  const keywords = currentKeywords.join(",");
+  if (editingArtistId) {
+    safeSend(JSON.stringify({
+      type: "update-artist",
+      artistId: editingArtistId,
+      name,
+      keywords,
+    }));
+    showToast("アーティストを更新中…", "info");
+  } else {
+    safeSend(JSON.stringify({ type: "create-artist", name, keywords }));
+    showToast("アーティストを作成中…", "info");
+  }
+  artistModal.hidden = true;
+});
+
+// =====================================================
+// アーティストオートコンプリート
+// =====================================================
+function setupArtistAutocomplete(input, wrap) {
+  let dropdown = null;
+
+  function showDropdown(query) {
+    removeDropdown();
+    const q = query.toLowerCase().replace(/\s+/g, "");
+    const matches = (state.artists || []).filter((a) => {
+      const normName = a.name.toLowerCase().replace(/\s+/g, "");
+      const normKw = (a.keywords || "").toLowerCase().replace(/\s+/g, "");
+      return normName.includes(q) || normKw.includes(q);
+    }).slice(0, 8);
+
+    const exactMatch = matches.some(
+      (a) => a.name.toLowerCase().replace(/\s+/g, "") === q
+    );
+
+    dropdown = document.createElement("div");
+    dropdown.className = "autocomplete-dropdown";
+
+    let html = matches.map((a) =>
+      `<div class="autocomplete-item" data-artist-name="${esc(a.name)}">
+        <span class="autocomplete-item-name">${esc(a.name)}</span>
+        <span class="autocomplete-item-count">${a.trackCount}曲</span>
+      </div>`
+    ).join("");
+
+    if (query.trim() && !exactMatch) {
+      html += `<div class="autocomplete-item autocomplete-item-create" data-artist-name="${esc(query.trim())}">
+        <span>「${esc(query.trim())}」を新規作成</span>
+      </div>`;
+    }
+
+    if (!html) { removeDropdown(); return; }
+    dropdown.innerHTML = html;
+    wrap.appendChild(dropdown);
+
+    dropdown.querySelectorAll(".autocomplete-item").forEach((item) => {
+      item.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        input.value = item.dataset.artistName;
+        removeDropdown();
+      });
+    });
+  }
+
+  function removeDropdown() {
+    if (dropdown) { dropdown.remove(); dropdown = null; }
+  }
+
+  input.addEventListener("input", () => {
+    if (input.value.trim()) showDropdown(input.value);
+    else removeDropdown();
+  });
+
+  input.addEventListener("focus", () => {
+    if (input.value.trim()) showDropdown(input.value);
+  });
+
+  input.addEventListener("blur", () => {
+    setTimeout(removeDropdown, 150);
+  });
+}
+
+// =====================================================
 // 起動
 // =====================================================
 connect();
+

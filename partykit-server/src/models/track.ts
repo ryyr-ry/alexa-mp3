@@ -6,8 +6,6 @@ export interface Track {
   artistId: string;
   album: string;
   duration: number;
-  /** 検索用キーワード（ニックネーム・別名等、カンマ区切り） */
-  keywords: string;
   addedAt: string;
 }
 

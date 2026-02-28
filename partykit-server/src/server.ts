@@ -15,6 +15,12 @@ import {
   handleUpdatePlaylist,
   handleArchivePlaylist,
 } from "./handlers/playlist-handler";
+import {
+  handleGetArtists,
+  handleCreateArtist,
+  handleUpdateArtist,
+  handleArchiveArtist,
+} from "./handlers/artist-handler";
 import { handleAlexaRequest } from "./handlers/alexa-handler";
 import { jsonResponse } from "./utils/json-response";
 import { TursoDb } from "./utils/db";
@@ -67,11 +73,14 @@ export default class MusicServer implements Party.Server {
   // ===========================================================
 
   private async broadcastState(): Promise<void> {
-    const tracks = await this.db.getTracks();
-    const playlists = await this.db.getPlaylists();
+    const [tracks, playlists, artists] = await Promise.all([
+      this.db.getTracks(),
+      this.db.getPlaylists(),
+      this.db.getArtists(),
+    ]);
     const message = JSON.stringify({
       type: "state-update",
-      state: { activeTracks: tracks, playlists },
+      state: { activeTracks: tracks, playlists, artists },
     });
     for (const conn of this.room.getConnections()) {
       conn.send(message);
@@ -98,12 +107,15 @@ export default class MusicServer implements Party.Server {
   async onConnect(conn: Party.Connection): Promise<void> {
     await this.ensureInitialized();
     console.log(`[WS] 接続: ${conn.id}`);
-    const tracks = await this.db.getTracks();
-    const playlists = await this.db.getPlaylists();
+    const [tracks, playlists, artists] = await Promise.all([
+      this.db.getTracks(),
+      this.db.getPlaylists(),
+      this.db.getArtists(),
+    ]);
     conn.send(
       JSON.stringify({
         type: "state-update",
-        state: { activeTracks: tracks, playlists },
+        state: { activeTracks: tracks, playlists, artists },
       })
     );
   }
@@ -165,8 +177,8 @@ export default class MusicServer implements Party.Server {
         }
 
         case "update-track": {
-          const { trackId, title, artist, album, keywords } = data;
-          const ok = await handleUpdateTrack(this.db, trackId, { title, artist, album, keywords });
+          const { trackId, title, artist, album } = data;
+          const ok = await handleUpdateTrack(this.db, trackId, { title, artist, album });
           if (!ok) {
             sender.send(
               JSON.stringify({ type: "error", message: "曲が見つかりません" })
@@ -230,6 +242,45 @@ export default class MusicServer implements Party.Server {
             return;
           }
           console.log(`[Playlist] アーカイブ: ${data.playlistId}`);
+          break;
+        }
+
+        case "create-artist": {
+          const artist = await handleCreateArtist(this.db, {
+            name: data.name,
+            keywords: data.keywords ?? "",
+          });
+          console.log(`[Artist] 作成: ${artist.name}`);
+          sender.send(
+            JSON.stringify({ type: "artist-created", artist })
+          );
+          break;
+        }
+
+        case "update-artist": {
+          const ok = await handleUpdateArtist(this.db, data.artistId, {
+            name: data.name,
+            keywords: data.keywords,
+          });
+          if (!ok) {
+            sender.send(
+              JSON.stringify({ type: "error", message: "アーティストが見つかりません" })
+            );
+            return;
+          }
+          console.log(`[Artist] 更新: ${data.artistId}`);
+          break;
+        }
+
+        case "archive-artist": {
+          const ok = await handleArchiveArtist(this.db, data.artistId);
+          if (!ok) {
+            sender.send(
+              JSON.stringify({ type: "error", message: "アーティストが見つかりません" })
+            );
+            return;
+          }
+          console.log(`[Artist] アーカイブ: ${data.artistId}`);
           break;
         }
 
@@ -337,6 +388,10 @@ export default class MusicServer implements Party.Server {
     const plMatch = path.match(/^\/api\/playlists\/([^/]+)$/);
     if (plMatch?.[1] && req.method === "GET") {
       return handleGetPlaylist(this.db, decodeURIComponent(plMatch[1]));
+    }
+
+    if (path === "/api/artists" && req.method === "GET") {
+      return handleGetArtists(this.db);
     }
 
     // Alexaエンドポイント（AudioPlayer Interface + 標準Skill API）

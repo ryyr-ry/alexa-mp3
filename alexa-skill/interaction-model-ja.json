@@ -33,9 +33,11 @@
             { "name": "playlistName", "type": "AMAZON.SearchQuery" }
           ],
           "samples": [
+            "{playlistName} のプレイリストを再生",
+            "{playlistName} のプレイリストをかけて",
+            "{playlistName} のプレイリストを流して",
             "プレイリスト {playlistName} を再生",
-            "プレイリスト {playlistName} をかけて",
-            "プレイリスト {playlistName} を流して"
+            "プレイリスト {playlistName} をかけて"
           ]
         },
         {

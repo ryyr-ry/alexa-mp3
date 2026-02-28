@@ -1,5 +1,6 @@
 import { createClient, type Client, type InValue } from "@libsql/client";
 import type { Track } from "../models/track";
+import type { Artist } from "../models/artist";
 import type { Playlist } from "../models/playlist";
 import { deriveArtistId } from "./hash";
 
@@ -9,7 +10,7 @@ import { deriveArtistId } from "./hash";
  * DI対応: コンストラクタで接続設定を注入
  * 全CRUD操作を型安全なメソッドで提供
  *
- * 型はmodels/track.ts、models/playlist.tsの単一ソースを再利用（重複定義禁止）
+ * 型はmodels/track.ts、models/playlist.ts、models/artist.tsの単一ソースを再利用（重複定義禁止）
  */
 
 export interface DbConfig {
@@ -44,7 +45,6 @@ export class TursoDb {
         id TEXT PRIMARY KEY, title TEXT NOT NULL, artist TEXT NOT NULL,
         artist_id TEXT NOT NULL DEFAULT '', album TEXT NOT NULL DEFAULT '',
         duration INTEGER NOT NULL DEFAULT 0,
-        keywords TEXT NOT NULL DEFAULT '',
         added_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
       CREATE INDEX IF NOT EXISTS idx_tracks_artist_id ON tracks(artist_id);
@@ -52,8 +52,12 @@ export class TursoDb {
         id TEXT PRIMARY KEY, title TEXT NOT NULL, artist TEXT NOT NULL,
         artist_id TEXT NOT NULL DEFAULT '', album TEXT NOT NULL DEFAULT '',
         duration INTEGER NOT NULL DEFAULT 0,
-        keywords TEXT NOT NULL DEFAULT '',
         added_at TEXT NOT NULL, archived_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS artists (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        keywords TEXT NOT NULL DEFAULT ''
       );
       CREATE TABLE IF NOT EXISTS playlists (
         id TEXT PRIMARY KEY, name TEXT NOT NULL,
@@ -72,22 +76,115 @@ export class TursoDb {
       );
     `);
 
-    // マイグレーション: 既存テーブルにkeywordsカラムを追加（既存なら無視）
-    for (const table of ["tracks", "archived_tracks"]) {
-      try {
-        await this.client.execute(`ALTER TABLE ${table} ADD COLUMN keywords TEXT NOT NULL DEFAULT ''`);
-        console.log(`[DB] ${table}にkeywordsカラムを追加`);
-      } catch {
-        // カラム既存 → 無視
-      }
-    }
+    // マイグレーション: 既存tracksからアーティストを自動生成
+    await this.client.execute(`
+      INSERT OR IGNORE INTO artists (id, name, keywords)
+      SELECT DISTINCT artist_id, artist, '' FROM tracks
+      WHERE artist_id != '' AND artist_id NOT IN (SELECT id FROM artists)
+    `);
 
     console.log("[DB] スキーマ初期化完了");
   }
 
+  // ===== Artists =====
+
+  /** 全アーティスト取得（曲数付きLEFT JOIN） */
+  async getArtists(): Promise<Artist[]> {
+    const rs = await this.client.execute(`
+      SELECT a.id, a.name, a.keywords,
+             COUNT(t.id) AS track_count
+      FROM artists a
+      LEFT JOIN tracks t ON t.artist_id = a.id
+      GROUP BY a.id
+      ORDER BY a.name COLLATE NOCASE
+    `);
+    return rs.rows.map(rowToArtist);
+  }
+
+  /** IDでアーティスト取得 */
+  async getArtist(id: string): Promise<Artist | null> {
+    const rs = await this.client.execute({
+      sql: `SELECT a.id, a.name, a.keywords,
+                   COUNT(t.id) AS track_count
+            FROM artists a
+            LEFT JOIN tracks t ON t.artist_id = a.id
+            WHERE a.id = ?
+            GROUP BY a.id`,
+      args: [id],
+    });
+    const row = rs.rows[0];
+    return row ? rowToArtist(row) : null;
+  }
+
+  /**
+   * アーティスト存在保証（存在しなければ作成）
+   * トラック追加・編集時に自動呼び出し
+   */
+  async ensureArtist(artistName: string): Promise<string> {
+    const id = deriveArtistId(artistName);
+    await this.client.execute({
+      sql: "INSERT OR IGNORE INTO artists (id, name, keywords) VALUES (?, ?, '')",
+      args: [id, artistName],
+    });
+    return id;
+  }
+
+  /** アーティスト新規作成（手動） */
+  async createArtist(name: string, keywords: string): Promise<Artist> {
+    const id = deriveArtistId(name);
+    await this.client.execute({
+      sql: "INSERT OR IGNORE INTO artists (id, name, keywords) VALUES (?, ?, ?)",
+      args: [id, name, keywords],
+    });
+    return { id, name, keywords, trackCount: 0 };
+  }
+
+  /** アーティスト更新（名前・キーワード） */
+  async updateArtist(
+    id: string,
+    fields: { name?: string; keywords?: string }
+  ): Promise<boolean> {
+    const sets: string[] = [];
+    const args: InValue[] = [];
+    if (fields.name !== undefined) { sets.push("name = ?"); args.push(fields.name); }
+    if (fields.keywords !== undefined) { sets.push("keywords = ?"); args.push(fields.keywords); }
+    if (sets.length === 0) return false;
+    args.push(id);
+    const rs = await this.client.execute({
+      sql: `UPDATE artists SET ${sets.join(", ")} WHERE id = ?`,
+      args,
+    });
+    return (rs.rowsAffected ?? 0) > 0;
+  }
+
+  /** アーティスト削除（所属曲のartistを"不明なアーティスト"に更新） */
+  async archiveArtist(id: string): Promise<boolean> {
+    const tx = await this.client.transaction("write");
+    try {
+      const unknownId = deriveArtistId("不明なアーティスト");
+      await tx.execute({
+        sql: "INSERT OR IGNORE INTO artists (id, name, keywords) VALUES (?, '不明なアーティスト', '')",
+        args: [unknownId],
+      });
+      await tx.execute({
+        sql: "UPDATE tracks SET artist = '不明なアーティスト', artist_id = ? WHERE artist_id = ?",
+        args: [unknownId, id],
+      });
+      const rs = await tx.execute({
+        sql: "DELETE FROM artists WHERE id = ?",
+        args: [id],
+      });
+      await tx.commit();
+      return (rs.rowsAffected ?? 0) > 0;
+    } catch (err) {
+      await tx.rollback();
+      throw err;
+    }
+  }
+
   // ===== Tracks =====
 
-  /** アーカイブ済みトラック取得（カタログのdeleted:trueエントリ生成用） */
+  /** アーカイブ済みトラック取得 */
   async getArchivedTracks(): Promise<Track[]> {
     const rs = await this.client.execute("SELECT * FROM archived_tracks ORDER BY archived_at DESC");
     return rs.rows.map(rowToTrack);
@@ -123,25 +220,27 @@ export class TursoDb {
   }
 
   async addTrack(track: Track): Promise<void> {
+    await this.ensureArtist(track.artist);
     await this.client.execute({
-      sql: "INSERT INTO tracks (id, title, artist, artist_id, album, duration, keywords, added_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      args: [track.id, track.title, track.artist, track.artistId, track.album, track.duration, track.keywords, track.addedAt],
+      sql: "INSERT INTO tracks (id, title, artist, artist_id, album, duration, added_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      args: [track.id, track.title, track.artist, track.artistId, track.album, track.duration, track.addedAt],
     });
   }
 
   async updateTrack(
     id: string,
-    fields: { title?: string; artist?: string; album?: string; keywords?: string }
+    fields: { title?: string; artist?: string; album?: string }
   ): Promise<boolean> {
     const sets: string[] = [];
     const args: InValue[] = [];
     if (fields.title !== undefined) { sets.push("title = ?"); args.push(fields.title); }
     if (fields.artist !== undefined) {
+      const artistId = deriveArtistId(fields.artist);
       sets.push("artist = ?"); args.push(fields.artist);
-      sets.push("artist_id = ?"); args.push(deriveArtistId(fields.artist));
+      sets.push("artist_id = ?"); args.push(artistId);
+      await this.ensureArtist(fields.artist);
     }
     if (fields.album !== undefined) { sets.push("album = ?"); args.push(fields.album); }
-    if (fields.keywords !== undefined) { sets.push("keywords = ?"); args.push(fields.keywords); }
     if (sets.length === 0) return false;
     args.push(id);
     const rs = await this.client.execute({
@@ -155,8 +254,8 @@ export class TursoDb {
     const tx = await this.client.transaction("write");
     try {
       const inserted = await tx.execute({
-        sql: `INSERT OR REPLACE INTO archived_tracks (id, title, artist, artist_id, album, duration, keywords, added_at)
-              SELECT id, title, artist, artist_id, album, duration, keywords, added_at FROM tracks WHERE id = ?`,
+        sql: `INSERT OR REPLACE INTO archived_tracks (id, title, artist, artist_id, album, duration, added_at)
+              SELECT id, title, artist, artist_id, album, duration, added_at FROM tracks WHERE id = ?`,
         args: [id],
       });
       if ((inserted.rowsAffected ?? 0) === 0) {
@@ -181,7 +280,7 @@ export class TursoDb {
 
   // ===== Playlists =====
 
-  /** アーカイブ済みPL取得（カタログのdeleted:trueエントリ生成用） */
+  /** アーカイブ済みPL取得 */
   async getArchivedPlaylists(): Promise<Playlist[]> {
     const rs = await this.client.execute("SELECT * FROM archived_playlists ORDER BY archived_at DESC");
     return rs.rows.map((row) => ({
@@ -189,7 +288,7 @@ export class TursoDb {
       name: String(row["name"] ?? ""),
       trackIds: [],
       createdAt: String(row["created_at"] ?? ""),
-      updatedAt: String(row["created_at"] ?? ""), // archived_playlistsにupdated_atカラムなし。created_atで代用
+      updatedAt: String(row["created_at"] ?? ""),
     }));
   }
 
@@ -358,27 +457,27 @@ export class TursoDb {
 
   // ===== Alexa検索 =====
 
-  /** 曲名でLIKE部分一致検索（スペース正規化＋keywords検索） */
+  /** 曲名でLIKE部分一致検索（スペース正規化） */
   async searchTracksByTitle(query: string): Promise<Track[]> {
     const normalized = query.replace(/\s+/g, "");
     const rs = await this.client.execute({
       sql: `SELECT * FROM tracks
             WHERE REPLACE(title, ' ', '') LIKE ?
-               OR REPLACE(keywords, ' ', '') LIKE ?
             ORDER BY added_at DESC`,
-      args: [`%${normalized}%`, `%${normalized}%`],
+      args: [`%${normalized}%`],
     });
     return rs.rows.map(rowToTrack);
   }
 
-  /** アーティスト名でLIKE部分一致検索（スペース正規化＋keywords検索） */
+  /** アーティスト名でLIKE部分一致検索（artists.keywordsをJOIN、スペース正規化） */
   async searchTracksByArtist(query: string): Promise<Track[]> {
     const normalized = query.replace(/\s+/g, "");
     const rs = await this.client.execute({
-      sql: `SELECT * FROM tracks
-            WHERE REPLACE(artist, ' ', '') LIKE ?
-               OR REPLACE(keywords, ' ', '') LIKE ?
-            ORDER BY added_at DESC`,
+      sql: `SELECT t.* FROM tracks t
+            JOIN artists a ON t.artist_id = a.id
+            WHERE REPLACE(a.name, ' ', '') LIKE ?
+               OR REPLACE(a.keywords, ' ', '') LIKE ?
+            ORDER BY t.added_at DESC`,
       args: [`%${normalized}%`, `%${normalized}%`],
     });
     return rs.rows.map(rowToTrack);
@@ -411,8 +510,16 @@ function rowToTrack(row: Record<string, unknown>): Track {
     artistId: String(row["artist_id"] ?? ""),
     album: String(row["album"] ?? ""),
     duration: Number(row["duration"] ?? 0),
-    keywords: String(row["keywords"] ?? ""),
     addedAt: String(row["added_at"] ?? ""),
+  };
+}
+
+function rowToArtist(row: Record<string, unknown>): Artist {
+  return {
+    id: String(row["id"] ?? ""),
+    name: String(row["name"] ?? ""),
+    keywords: String(row["keywords"] ?? ""),
+    trackCount: Number(row["track_count"] ?? 0),
   };
 }
 

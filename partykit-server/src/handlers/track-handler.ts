@@ -31,7 +31,6 @@ export async function handleAddTrack(
     artistId: deriveArtistId(input.artist),
     album: input.album,
     duration: input.duration,
-    keywords: "",
     addedAt: new Date().toISOString().replace("T", " ").replace(/\.\d{3}Z$/, ""),
   };
   await db.addTrack(track);
@@ -42,7 +41,7 @@ export async function handleAddTrack(
 export async function handleUpdateTrack(
   db: TursoDb,
   trackId: string,
-  fields: { title?: string; artist?: string; album?: string; keywords?: string }
+  fields: { title?: string; artist?: string; album?: string }
 ): Promise<boolean> {
   return db.updateTrack(trackId, fields);
 }
